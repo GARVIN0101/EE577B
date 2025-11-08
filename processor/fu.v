@@ -1,49 +1,45 @@
+`timescale 1ns/1ps
 module fu (
-    // ID/EX (current EX stage operands)
-    input  wire [4:0] id_ex_rs1,       // source register for ALU operand A
-    input  wire [4:0] id_ex_rs2,       // source register for ALU operand B
+    // ===== ID/EX (current EX stage source registers) =====
+    input  wire [0:4] ex_srcA,   // Source register A
+    input  wire [0:4] ex_srcB,   // Source register B
 
-    //EX/MEM (one stage ahead)
-    input  wire [4:0] ex_mem_rd,       // destination register in EX/MEM stage
-    input  wire       ex_mem_regWrite, // whether EX/MEM will write back
-    input  wire       ex_mem_memRead,  // whether EX/MEM is a LOAD
+    // ===== EX/MEM stage (one stage ahead) =====
+    input  wire [0:4] exm_rD,        // Destination register in EX/MEM
+    input  wire       exm_writes_rD, // EX/MEM instruction writes register
+    input  wire       exm_is_load,   // EX/MEM is load → value not yet available
 
-    //MEM/WB (two stages ahead)
-    input  wire [4:0] mem_wb_rd,       // destination register in MEM/WB stage
-    input  wire       mem_wb_regWrite, // whether MEM/WB will write back
+    // ===== MEM/WB stage (two stages ahead) =====
+    input  wire [0:4] wb_rD,         // Destination register in MEM/WB
+    input  wire       wb_writes_rD,  // MEM/WB instruction writes register
 
-    //Outputs: select signals for ALU operand muxes
-    output reg  [1:0] fwd_a_sel,       // ALU src A select
-    output reg  [1:0] fwd_b_sel        // ALU src B select
+    // ===== Forwarding control outputs =====
+    // 00: use regfile
+    // 01: forward from EX/MEM
+    // 10: forward from MEM/WB
+    output reg  [1:0] fwdA_sel,
+    output reg  [1:0] fwdB_sel
 );
-    // Dependency detection
-    // True when EX/MEM or MEM/WB destination matches current
-    // ID/EX source register. Ignore register 0 (hardwired zero).
-    wire exmem_hit_rs1 = ex_mem_regWrite && (ex_mem_rd != 5'd0) && (ex_mem_rd == id_ex_rs1);
-    wire exmem_hit_rs2 = ex_mem_regWrite && (ex_mem_rd != 5'd0) && (ex_mem_rd == id_ex_rs2);
 
-    wire memwb_hit_rs1 = mem_wb_regWrite && (mem_wb_rd != 5'd0) && (mem_wb_rd == id_ex_rs1);
-    wire memwb_hit_rs2 = mem_wb_regWrite && (mem_wb_rd != 5'd0) && (mem_wb_rd == id_ex_rs2);
+    // EX/MEM forwarding candidates (must not be load; must write; must not be x0; match source reg)
+    wire exm_ok_A = exm_writes_rD && !exm_is_load && (exm_rD != 5'd0) && (ex_srcA == exm_rD);
+    wire exm_ok_B = exm_writes_rD && !exm_is_load && (exm_rD != 5'd0) && (ex_srcB == exm_rD);
 
-    // Do not forward from EX/MEM if it is a load (data not yet ready)
-    wire exmem_can_forward = ex_mem_regWrite && !ex_mem_memRead;
+    // WB forwarding candidates (must write; must not be x0; match source reg)
+    wire wb_ok_A  = wb_writes_rD  && (wb_rD  != 5'd0) && (ex_srcA == wb_rD);
+    wire wb_ok_B  = wb_writes_rD  && (wb_rD  != 5'd0) && (ex_srcB == wb_rD);
 
-    // Forwarding select logic (priority: EX/MEM > MEM/WB)
     always @* begin
-        // defaults: no forwarding (use regfile data)
-        fwd_a_sel = 2'b00;
-        fwd_b_sel = 2'b00;
+        // Default: read from register file
+        fwdA_sel = 2'b00;
+        fwdB_sel = 2'b00;
 
-        // Operand A
-        if (exmem_can_forward && exmem_hit_rs1)
-            fwd_a_sel = 2'b10;        // from EX/MEM
-        else if (memwb_hit_rs1)
-            fwd_a_sel = 2'b01;        // from MEM/WB
+        // Priority: EX/MEM > WB
+        // Load cannot forward from EX/MEM because value is not ready
+        if (exm_ok_A)       fwdA_sel = 2'b01;
+        else if (wb_ok_A)   fwdA_sel = 2'b10;
 
-        // Operand B
-        if (exmem_can_forward && exmem_hit_rs2)
-            fwd_b_sel = 2'b10;        // from EX/MEM
-        else if (memwb_hit_rs2)
-            fwd_b_sel = 2'b01;        // from MEM/WB
+        if (exm_ok_B)       fwdB_sel = 2'b01;
+        else if (wb_ok_B)   fwdB_sel = 2'b10;
     end
 endmodule
